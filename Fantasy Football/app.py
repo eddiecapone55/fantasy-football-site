@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import json, os
+from pathlib import Path
 
 # --- Page config: wide & title ---
 st.set_page_config(page_title="Fantasy Football Player Rankings — Gridiron AI", layout="wide")
@@ -14,32 +15,34 @@ EXPECTED_COL = "Expected Points (Expected fantasy points based on the selected s
 DOWNSIDE_COL = "Downside Points (Downside fantasy points based on the selected scoring settings.)"
 UPSIDE_COL = "Upside Points (Upside fantasy points based on the selected scoring settings.)"
 
-STATE_PATH = "data/draft_state.json"
+# ---- Paths anchored to this file's directory ----
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "data"
+CSV_PATH = DATA_DIR / "gridironai-rankings-2025-0.csv"
+STATE_PATH = DATA_DIR / "draft_state.json"
 
 # ---- Persistence helpers ----
-def save_state(df, history):
+def save_state(df: pd.DataFrame, history):
     """Persist minimal state to disk: Drafted/MyTeam per player (by Name) and undo history by Name."""
     try:
         payload = {
             "rows": df[["Name", "Drafted", "MyTeam"]].to_dict(orient="records"),
             "history": history,  # list of {"name": str, "prev": {"Drafted": bool, "MyTeam": bool}}
         }
-        with open(STATE_PATH, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
+        STATE_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception as e:
         st.warning(f"Could not save state: {e}")
 
 def load_state():
-    if not os.path.exists(STATE_PATH):
+    if not STATE_PATH.exists():
         return None
     try:
-        with open(STATE_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
+        return json.loads(STATE_PATH.read_text(encoding="utf-8"))
     except Exception as e:
         st.warning(f"Could not load saved state: {e}")
         return None
 
-def apply_state_to_df(df, state):
+def apply_state_to_df(df: pd.DataFrame, state):
     if not state or "rows" not in state:
         return df
     saved = {row["Name"]: row for row in state["rows"]}
@@ -51,8 +54,15 @@ def apply_state_to_df(df, state):
 
 # ---- Load data ----
 @st.cache_data
-def load_data():
-    df = pd.read_csv("data/gridironai-rankings-2025-0.csv")
+def load_data() -> pd.DataFrame:
+    if not CSV_PATH.exists():
+        st.error(
+            f"Data file not found at:\n{CSV_PATH}\n\n"
+            f"Current working directory: {Path.cwd()}"
+        )
+        st.stop()
+
+    df = pd.read_csv(CSV_PATH)
 
     # Ensure numerics for filtering/formatting
     def to_num(col):
@@ -88,7 +98,7 @@ st.title("Fantasy Football Player Rankings — Gridiron AI")
 # ---- Undo helpers (history stored by Name to avoid index drift) ----
 def record_and_apply(idx: int, drafted: bool, myteam: bool):
     name = df.at[idx, "Name"]
-    prev = {"Drafted": bool(df.at[idx, "Drafted"]), "MyTeam": bool(df.at[idx, "MyTeam"])}
+    prev = {"Drafted": bool(df.at[idx, "Drafted"]), "MyTeam": bool(df.at[idx, "MyTeam"]) }
     st.session_state["history"].append({"name": name, "prev": prev})
     df.at[idx, "Drafted"] = drafted
     df.at[idx, "MyTeam"] = myteam
